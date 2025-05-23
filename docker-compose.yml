@@ -1,0 +1,263 @@
+version: '3.8'
+
+services:
+  api1:
+    build: ./api
+    expose:
+      - "3000"
+    depends_on:
+      - redis
+      - haproxy
+      - rabbitmq
+    environment:
+      - REDIS_HOST=haproxy
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=haproxy
+      - POSTGRES_PORT=26256
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=""
+      - POSTGRES_DB=appdb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+
+  api2:
+    build: ./api
+    expose:
+      - "3000"
+    depends_on:
+      - redis
+      - haproxy
+      - rabbitmq
+    environment:
+      - REDIS_HOST=haproxy
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=haproxy
+      - POSTGRES_PORT=26256
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=""
+      - POSTGRES_DB=appdb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+
+  api3:
+    build: ./api
+    expose:
+      - "3000"
+    depends_on:
+      - redis
+      - haproxy
+      - rabbitmq
+    environment:
+      - REDIS_HOST=haproxy
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=haproxy
+      - POSTGRES_PORT=26256
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=""
+      - POSTGRES_DB=appdb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+
+  consumer:
+    build: ./consumer
+    command: node consumer.js
+    environment:
+      - REDIS_HOST=haproxy
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=haproxy
+      - POSTGRES_PORT=26256
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=""
+      - POSTGRES_DB=appdb
+    healthcheck:
+      test: ["CMD", "pgrep", "node"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+    depends_on:
+      - redis
+      - rabbitmq
+      - api1
+      - api2
+      - api3
+      - haproxy
+
+  consumer2:
+    build: ./consumer
+    command: node consumer.js
+    environment:
+      - REDIS_HOST=haproxy
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=haproxy
+      - POSTGRES_PORT=26256
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=
+      - POSTGRES_DB=appdb
+      - ROLE=consumer2
+    healthcheck:
+      test: ["CMD", "pgrep", "node"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: always
+    depends_on:
+      - redis
+      - rabbitmq
+      - api1
+      - api2
+      - api3
+      - haproxy
+
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    restart: always
+
+  redis2:
+    image: redis:7
+    expose:
+      - "6379"
+    restart: always
+
+  crdb1:
+    image: cockroachdb/cockroach:v23.1.11
+    command: start --insecure --join=crdb1,crdb2,crdb3
+    hostname: crdb1
+    ports:
+      - "26257:26257"
+      - "8080:8080"
+    volumes:
+      - crdb1-data:/cockroach/cockroach-data
+
+  crdb2:
+    image: cockroachdb/cockroach:v23.1.11
+    command: start --insecure --join=crdb1,crdb2,crdb3
+    hostname: crdb2
+    ports:
+      - "26258:26257"
+      - "8081:8080"
+    volumes:
+      - crdb2-data:/cockroach/cockroach-data
+
+  crdb3:
+    image: cockroachdb/cockroach:v23.1.11
+    command: start --insecure --join=crdb1,crdb2,crdb3
+    hostname: crdb3
+    ports:
+      - "26259:26257"
+      - "8082:8080"
+    volumes:
+      - crdb3-data:/cockroach/cockroach-data
+
+  crdb-init:
+    image: cockroachdb/cockroach:v23.1.11
+    depends_on:
+      - crdb1
+    entrypoint: >
+      /bin/sh -c "
+        echo 'Assuming crdb1 is ready...';
+        echo 'Initializing cluster...';
+        cockroach init --insecure --host=crdb1 || echo 'Already initialized';
+        cockroach sql --insecure --host=crdb1 -e 'CREATE DATABASE appdb;'
+        cockroach sql --insecure --host=crdb1 --database=appdb -e 'CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY,value TEXT,last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW());'
+        echo 'Done.';
+      "
+
+  haproxy:
+    image: haproxy:2.9
+    ports:
+      - "26256:26256"
+      - "3000:3000"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - crdb-init  # Ensure init happens first
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq1
+    hostname: rabbit1
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_ERLANG_COOKIE=MY_SECRET_COOKIE
+      - RABBITMQ_NODENAME=rabbit@rabbit1
+      - RABBITMQ_CLUSTER_PARTITION_HANDLING=autoheal
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    restart: always
+
+  rabbitmq2:
+    image: rabbitmq:3-management
+    container_name: rabbitmq2
+    hostname: rabbit2
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    environment:
+      - RABBITMQ_ERLANG_COOKIE=MY_SECRET_COOKIE
+      - RABBITMQ_NODENAME=rabbit@rabbit2
+      - RABBITMQ_CLUSTER_PARTITION_HANDLING=autoheal
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+      - RABBITMQ_CLUSTER_NODE_NAME=rabbit@rabbit1
+    volumes:
+      - rabbitmq2-data:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    restart: always
+    depends_on:
+      - rabbitmq
+
+  rabbitmq-init:
+    image: rabbitmq:3-management
+    #depends_on:
+      #- rabbitmq
+      #- rabbitmq2
+    entrypoint: >
+      /bin/sh -c "
+        echo 'Waiting for RabbitMQ nodes to be ready...';
+        sleep 30;
+        echo 'Joining nodes to cluster...';
+        rabbitmqctl -n rabbit@rabbit2 stop_app;
+        rabbitmqctl -n rabbit@rabbit2 reset;
+        rabbitmqctl -n rabbit@rabbit2 join_cluster rabbit@rabbit1;
+        rabbitmqctl -n rabbit@rabbit2 start_app;
+        echo 'Creating quorum queues...';
+        rabbitmqadmin -u guest -p guest declare queue name=add_key queue_type=quorum;
+        rabbitmqadmin -u guest -p guest declare queue name=del_key queue_type=quorum;
+        echo 'Done.';
+      "
+
+volumes:
+  crdb1-data:
+  crdb2-data:
+  crdb3-data:
+  rabbitmq-data:
+  rabbitmq2-data:
